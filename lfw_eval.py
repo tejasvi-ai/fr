@@ -136,9 +136,9 @@ for i in range(6000):
 
     if model_name:
         try:
-            cosdistance = DeepFace.verify(f'lfw/{name1}', f'lfw/{name2}', model_name=model_name, model=net, enforce_detection=False)["distance"]
+            cosdistance = 1 - DeepFace.verify(f'lfw/{name1}', f'lfw/{name2}', model_name=model_name, model=net, enforce_detection=False)["distance"]
         except ZeroDivisionError:
-            cosdistance = 1
+            cosdistance = 0.5
             error += 1
     else:
         img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
