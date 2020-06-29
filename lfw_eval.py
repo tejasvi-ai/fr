@@ -12,7 +12,7 @@ import zipfile
 from timeit import default_timer as timer
 
 from sphereface.dataset import ImageDataset
-from sphereface.matlab_cp2tform import get_similarity_transform_for_cv2
+from cp2tform import get_similarity_transform_for_cv2
 import sphereface.net_sphere
 import tensorflow as tf
 
@@ -44,7 +44,7 @@ def KFold(n=6000, n_folds=10, shuffle=False):
     folds = []
     base = list(range(n))
     for i in range(n_folds):
-        test = base[i*n/n_folds:(i+1)*n/n_folds]
+        test = base[i*n//n_folds:(i+1)*n//n_folds]
         train = list(set(base)-set(test))
         folds.append([train,test])
     return folds
@@ -84,7 +84,7 @@ class _TQDM(tqdm.tqdm):
 tqdm.tqdm = _TQDM
 
 parser = argparse.ArgumentParser(description='PyTorch sphereface lfw')
-parser.add_argument('--net','-n', default='facenet', type=str)
+parser.add_argument('--net','-n', default='openface', type=str)
 parser.add_argument('--lfw', default='lfw.zip', type=str)
 parser.add_argument('--model','-m', default='sphereface/model/sphere20a_20171020.pth', type=str)
 args = parser.parse_args()
@@ -120,8 +120,9 @@ with open('sphereface/data/pairs.txt') as f:
     pairs_lines = f.readlines()[1:]
 
 time = timer()
+error = 0
 for i in range(6000):
-    if not i % 10: print(f"\r{i/6000*100:.3f}% after {timer()-time}s", end='')
+    if not i % 10: print(f"\r{i/6000*100:.3f}% after {timer()-time:.3f}s", end='')
     p = pairs_lines[i].replace('\n','').split('\t')
 
     if 3==len(p):
@@ -138,6 +139,7 @@ for i in range(6000):
             cosdistance = DeepFace.verify(f'lfw/{name1}', f'lfw/{name2}', model_name=model_name, model=net, enforce_detection=False)["distance"]
         except ZeroDivisionError:
             cosdistance = 1
+            error += 1
     else:
         img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
         img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
@@ -155,7 +157,6 @@ for i in range(6000):
         cosdistance = f1.dot(f2)/(f1.norm()*f2.norm()+1e-5)
     predicts.append('{}\t{}\t{}\t{}\n'.format(name1,name2,cosdistance,sameflag))
 
-
 accuracy = []
 thd = []
 folds = KFold(n=6000, n_folds=10, shuffle=False)
@@ -163,7 +164,7 @@ thresholds = np.arange(-1.0, 1.0, 0.05)
 predicts = np.array([line.strip('\n').split() for line in predicts])
 # predicts = np.array(map(lambda line:line.strip('\n').split(), predicts))
 for idx, (train, test) in enumerate(folds):
-    print(f"Testing {idx+1} fold out of {folds} folds.")
+    print(f"Testing {idx+1} fold out of {len(folds)} folds.")
     best_thresh = find_best_threshold(thresholds, predicts[train])
     accuracy.append(eval_acc(best_thresh, predicts[test], extra_stats=True))
     thd.append(best_thresh)
