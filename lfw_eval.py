@@ -1,3 +1,8 @@
+import logging
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
+logging.getLogger('tensorflow').setLevel(logging.FATAL)
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,17 +18,13 @@ from timeit import default_timer as timer
 
 from sphereface.dataset import ImageDataset
 from cp2tform import get_similarity_transform_for_cv2
-import sphereface.net_sphere
+import sphereface.net_sphere as net_sphere
 import tensorflow as tf
 
 import DeepFace
 from deepface.basemodels import OpenFace, Facenet, FbDeepFace
 
-import logging
-import os
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
-logging.getLogger('tensorflow').setLevel(logging.FATAL)
+from random import shuffle
 
 
 def alignment(src_img,src_pts):
@@ -49,7 +50,7 @@ def KFold(n=6000, n_folds=10, shuffle=False):
         folds.append([train,test])
     return folds
 
-def eval_acc(threshold, diff, extra_stats=False):
+def eval_acc(threshold, diff, extra_stats=True):
     y_true = []
     y_predict = []
     for d in diff:
@@ -60,8 +61,14 @@ def eval_acc(threshold, diff, extra_stats=False):
     y_predict = np.array(y_predict)
     accuracy = 1.0*np.count_nonzero(y_true==y_predict)/len(y_true)
     if extra_stats:
-        t_p = 1.0*np.count_nonzero((y_true==y_predict) & (y_true==1))/len(y_true[y_true==1])
-        f_p = 1.0*np.count_nonzero((y_true==y_predict) & (y_true!=1))/len(y_true[y_true!=1])
+        try:
+            t_p = 1.0*np.count_nonzero((y_true==y_predict) & (y_true==1))/len(y_true[y_true==1])
+        except:
+            t_p = 'NaN'
+        try:
+            f_p = 1 - 1.0*np.count_nonzero((y_true==y_predict) & (y_true!=1))/len(y_true[y_true!=1])
+        except:
+            f_p = 'NaN'
         print('Thresh: ', threshold, 't_p: ', t_p, 'f_p: ', f_p, 'accuracy: ', accuracy)
     return accuracy
 
@@ -84,7 +91,7 @@ class _TQDM(tqdm.tqdm):
 tqdm.tqdm = _TQDM
 
 parser = argparse.ArgumentParser(description='PyTorch sphereface lfw')
-parser.add_argument('--net','-n', default='openface', type=str)
+parser.add_argument('--net','-n', default='sphereface', type=str)
 parser.add_argument('--lfw', default='lfw.zip', type=str)
 parser.add_argument('--model','-m', default='sphereface/model/sphere20a_20171020.pth', type=str)
 args = parser.parse_args()
@@ -101,7 +108,7 @@ elif args.net == 'openface':
     net = OpenFace.loadModel()
     model_name = 'OpenFace'
 else:
-    net = getattr(net_sphere,args.net)()
+    net = getattr(net_sphere,'sphere20a')()
     net.load_state_dict(torch.load(args.model))
     net.cuda()
     net.eval()
@@ -119,10 +126,9 @@ for line in landmark_lines:
 with open('sphereface/data/pairs.txt') as f:
     pairs_lines = f.readlines()[1:]
 
-time = timer()
-error = 0
+same_name_list = []
+diff_name_list = []
 for i in range(6000):
-    if not i % 10: print(f"\r{i/6000*100:.3f}% after {timer()-time:.3f}s", end='')
     p = pairs_lines[i].replace('\n','').split('\t')
 
     if 3==len(p):
@@ -132,8 +138,25 @@ for i in range(6000):
     if 4==len(p):
         sameflag = 0
         name1 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[1]))
-        name2 = p[2]+'/'+p[2]+'_'+'{:04}.jpg'.format(int(p[3]))
+        name2 = p[2] + '/' + p[2] + '_' + '{:04}.jpg'.format(int(p[3]))
+    if sameflag:
+        same_name_list.append((name1, name2, 1))
+    else:
+        diff_name_list.append((name1, name2, 0))
+random.shuffle(same_name_list)
+random.shuffle(diff_name_list)
+name_list = diff_name_list + same_name_list
 
+time = timer()
+error = 0
+for i in range(len(name_list)):
+    if not i % 10: print(f"\r{i/6000*100:.2f}% after {timer()-time:.2f}s", end='')
+    sameflag = name_list[i][2]
+    if sameflag:
+        name1 = name_list[i][0]
+    else:
+        name1 = name_list[i // 100 * 100][0]
+    name2 = name_list[i][1]
     if model_name:
         try:
             cosdistance = 1 - DeepFace.verify(f'lfw/{name1}', f'lfw/{name2}', model_name=model_name, model=net, enforce_detection=False)["distance"]
@@ -157,6 +180,7 @@ for i in range(6000):
         cosdistance = f1.dot(f2)/(f1.norm()*f2.norm()+1e-5)
     predicts.append('{}\t{}\t{}\t{}\n'.format(name1,name2,cosdistance,sameflag))
 
+print('\n')
 accuracy = []
 thd = []
 folds = KFold(n=6000, n_folds=10, shuffle=False)
@@ -169,3 +193,4 @@ for idx, (train, test) in enumerate(folds):
     accuracy.append(eval_acc(best_thresh, predicts[test], extra_stats=True))
     thd.append(best_thresh)
 print('LFWACC={:.4f} std={:.4f} thd={:.4f}'.format(np.mean(accuracy), np.std(accuracy), np.mean(thd)))
+thd
