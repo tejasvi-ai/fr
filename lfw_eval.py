@@ -15,6 +15,9 @@ import argparse
 import numpy as np
 import zipfile
 from timeit import default_timer as timer
+from PIL import Image
+from itertools import cycle
+from glob import glob
 
 from sphereface.dataset import ImageDataset
 from cp2tform import get_similarity_transform_for_cv2
@@ -25,6 +28,7 @@ import DeepFace
 from deepface.basemodels import OpenFace, Facenet, FbDeepFace
 
 from random import shuffle
+
 
 
 def alignment(src_img,src_pts):
@@ -91,8 +95,10 @@ class _TQDM(tqdm.tqdm):
 tqdm.tqdm = _TQDM
 
 parser = argparse.ArgumentParser(description='PyTorch sphereface lfw')
-parser.add_argument('--net','-n', default='sphereface', type=str)
+parser.add_argument('--net','-n', default='deepface', type=str)
 parser.add_argument('--lfw', default='lfw.zip', type=str)
+parser.add_argument('--flickr', default='flickr', type=str)
+parser.add_argument('--data', default='flickr', type=str)
 parser.add_argument('--model','-m', default='sphereface/model/sphere20a_20171020.pth', type=str)
 args = parser.parse_args()
 
@@ -147,6 +153,11 @@ random.shuffle(same_name_list)
 random.shuffle(diff_name_list)
 name_list = diff_name_list + same_name_list
 
+if args.data == 'flickr':
+    neg_list = glob(args.flickr+'/**/*.png', recursive=True)
+random.shuffle(neg_list)
+neg_list = cycle(neg_list)
+
 time = timer()
 error = 0
 for i in range(len(name_list)):
@@ -158,14 +169,21 @@ for i in range(len(name_list)):
         name1 = name_list[i // 100 * 100][0]
     name2 = name_list[i][1]
     if model_name:
+        if not sameflag and args.data == 'flickr':
+            name1 = next(neg_list)
+        else:
+            name = 'lfw/' + name
         try:
-            cosdistance = 1 - DeepFace.verify(f'lfw/{name1}', f'lfw/{name2}', model_name=model_name, model=net, enforce_detection=False)["distance"]
+            cosdistance = 1 - DeepFace.verify(name1, f'lfw/{name2}', model_name=model_name, model=net, enforce_detection=False)["distance"]
         except ZeroDivisionError:
             cosdistance = 0.5
             error += 1
     else:
         img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
-        img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
+        if not sameflag and args.data == 'flickr':
+            img2 = cv2.imread(next(neg_list))[8:120, 16:112, :]
+        else:
+            img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
 
         imglist = [img1,cv2.flip(img1,1),img2,cv2.flip(img2,1)]
         for i in range(len(imglist)):
